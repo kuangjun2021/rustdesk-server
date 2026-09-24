@@ -1,0 +1,57 @@
+name: Build hardened hbbs-hbbr
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: forapi
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Apply hardening
+        run: |
+          python3 - << 'PYEOF'
+          p = 'src/jwt.rs'
+          s = open(p).read()
+          s = s.replace('    println!("secret: {:}", SECRET.to_string());\n', '')
+          open(p, 'w').write(s)
+
+          p = 'src/rendezvous_server.rs'
+          lines = open(p).read().splitlines(keepends=True)
+          out = []
+          state = 0
+          for ln in lines:
+              out.append(ln)
+              if state == 0 and 'Union::RequestRelay(mut rf)' in ln:
+                  state = 1
+              elif state == 1 and 'get_in_memory' in ln:
+                  indent = ln[:len(ln) - len(ln.lstrip())]
+                  out.append(indent + '    if MUST_LOGIN.load(Ordering::SeqCst) {')
+                  out.append(indent + '        if rf.token.is_empty()')
+                  out.append(indent + '            || (!jwt::SECRET.is_empty()')
+                  out.append(indent + '                && jwt::verify_token(&rf.token).is_err())')
+                  out.append(indent + '        {')
+                  out.append(indent + '            log::warn!("RequestRelay rejected: login required");')
+                  out.append(indent + '            return true;')
+                  out.append(indent + '        }')
+                  state = 2
+          assert state == 2, 'RequestRelay arm not found'
+          open(p, 'w').write(''.join(out))
+          print('hardening applied')
+          PYEOF
+
+      - name: Build
+        run: cargo build --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hbbs-hbbr-linux-amd64
+          path: |
+            target/release/hbbs
+            target/release/hbbr
