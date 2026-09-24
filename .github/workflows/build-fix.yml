@@ -23,26 +23,12 @@ jobs:
           open(p, 'w').write(s)
 
           p = 'src/rendezvous_server.rs'
-          lines = open(p).read().splitlines(keepends=True)
-          out = []
-          state = 0
-          for ln in lines:
-              out.append(ln)
-              if state == 0 and 'Union::RequestRelay(mut rf)' in ln:
-                  state = 1
-              elif state == 1 and 'get_in_memory' in ln:
-                  indent = ln[:len(ln) - len(ln.lstrip())]
-                  out.append(indent + '    if MUST_LOGIN.load(Ordering::SeqCst) {')
-                  out.append(indent + '        if rf.token.is_empty()')
-                  out.append(indent + '            || (!jwt::SECRET.is_empty()')
-                  out.append(indent + '                && jwt::verify_token(&rf.token).is_err())')
-                  out.append(indent + '        {')
-                  out.append(indent + '            log::warn!("RequestRelay rejected: login required");')
-                  out.append(indent + '            return true;')
-                  out.append(indent + '        }')
-                  state = 2
-          assert state == 2, 'RequestRelay arm not found'
-          open(p, 'w').write(''.join(out))
+          s = open(p).read()
+          old = 'if let Some(peer) = self.pm.get_in_memory(&rf.id).await {'
+          new = 'if MUST_LOGIN.load(Ordering::SeqCst) {\n                        if rf.token.is_empty()\n                            || (!jwt::SECRET.is_empty()\n                                && jwt::verify_token(&rf.token).is_err())\n                        {\n                            log::warn!("RequestRelay rejected: login required");\n                            return true;\n                        }\n                    }\n                    if let Some(peer) = self.pm.get_in_memory(&rf.id).await {'
+          assert s.count(old) == 1, 'anchor not found: %d' % s.count(old)
+          s = s.replace(old, new)
+          open(p, 'w').write(s)
           print('hardening applied')
           PYEOF
 
